@@ -50,8 +50,8 @@ MathsAssist AI can generate a variety of mathematical visualisations to assist w
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/mathassist-ai.git
-cd mathassist-ai
+git clone https://github.com/OpenKit-Ltd/maths-assist.git
+cd maths-assist
 
 # Install dependencies
 npm install
