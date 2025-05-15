@@ -17,14 +17,14 @@ A React application that generates custom KS3 mathematics questions with visual 
 
 ## 🖼 Examples
 
-MathsAssist AI can generate a variety of mathematical visualisations to assist with teaching. Here are some examples of the types of content it can create:
+MathsAssist AI can generate a variety of mathematical visualisations to assist with teaching. Here are screenshots of the platform and examples of the types of content it can create:
 
 | Description                  | Example                                                                                     |
 | ---------------------------- | ------------------------------------------------------------------------------------------- |
-| Application Homepage         | <img src="./screenshots/homepage.png" width="500" alt="MathsAssist AI homepage"/>           |
-| Area and Perimeter           | <img src="./screenshots/area-question.png" width="500" alt="Area and perimeter question"/>  |
+| Application Homepage        | <img src="./screenshots/homepage.png" width="500" alt="MathsAssist AI homepage"/>           |
+| Area and Perimeter Question          | <img src="./screenshots/area-question.png" width="500" alt="Area and perimeter question"/>  |
 | Coordinate Geometry Solution | <img src="./screenshots/grid-solution.png" width="500" alt="Step-by-step solution"/>        |
-| Fraction Operations          | <img src="./screenshots/fractions-solution.png" width="500" alt="Fraction operations"/>     |
+| Fraction Operations         | <img src="./screenshots/fractions-solution.png" width="500" alt="Fraction operations"/>     |
 | Complex Pythagoras           | <img src="./screenshots/complex-pythagoras.png" width="500" alt="Complex Pythagoras"/>      |
 | Misconceptions Analysis      | <img src="./screenshots/misconceptions-tab.png" width="500" alt="Misconceptions Analysis"/> |
 
