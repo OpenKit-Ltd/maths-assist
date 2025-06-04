@@ -245,4 +245,4 @@ MIT License
 
 ---
 
-Made with ❤️ by Reuben McQueen at [OpenKit](https://openkit.co.uk)
+Made with ❤️ at [OpenKit](https://openkit.co.uk)
