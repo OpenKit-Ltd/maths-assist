@@ -1,69 +1,47 @@
-// src/pages/MathAssistantPage.tsx
-import { useState, useRef, useEffect } from "react";
+// Updated MathAssistantPage.tsx
+import { useState } from "react";
 import { GeminiAPI } from "../api/geminiAPI";
 import { ChatInput } from "../components/ChatInput";
-import { LatexDocumentRenderer } from "../components/LatexDocumentRenderer";
+import { MarkdownQuestionRenderer } from "../components/MarkdownQuestionRenderer";
 import { TopicsMisconceptionsTable } from "../components/TopicsMisconceptionsTable";
+import { DebugInfo } from "../components/DebugInfo";
 import { Button } from "../components/ui/button";
 import SplitText from "../components/SplitText";
-import { renderQueue } from "../lib/renderQueue";
 import {
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
 } from "../components/ui/tabs";
-import { parseGeminiResponse, ParsedResponse, Topic } from "../lib/parser";
+import { parseAIResponse, ParsedResponse, Topic } from "../lib/parser";
 import {
   GENERATE_QUESTIONS_PROMPT,
-  CONTENT_STORE_MISCONCEPTIONS,
+  EXAMPLE_PROMPTS,
 } from "../lib/prompts";
-import { TikzExamples } from "@/lib/tikz";
+import { MISCONCEPTIONS_LIST } from "../lib/misconceptions";
 import {
   BookOpenIcon,
   SparklesIcon,
   BrainIcon,
   CalculatorIcon,
+  EyeIcon,
+  EyeOffIcon,
+  DownloadIcon,
 } from "lucide-react";
 
 // Initialize the API client with the API key from environment variables
 const gemini = new GeminiAPI(import.meta.env.VITE_GEMINI_API_KEY as string);
 
-// Define example prompts
-const examplePrompts = [
-  {
-    id: 1,
-    text: "My students are struggling with the Pythagorean theorem, especially with not knowing which side is the hypotenuse",
-    icon: <CalculatorIcon size={18} />,
-  },
-  {
-    id: 2,
-    text: "I need questions about area and perimeter calculations for Year 7 students",
-    icon: <BookOpenIcon size={18} />,
-  },
-  {
-    id: 3,
-    text: "Create fraction division examples with visual representations for KS3",
-    icon: <BrainIcon size={18} />,
-  },
-  {
-    id: 4,
-    text: "Generate coordinate geometry questions that address common misconceptions",
-    icon: <SparklesIcon size={18} />,
-  },
-];
-
 export function MathAssistantPage() {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [parsedResponse, setParsedResponse] = useState<ParsedResponse | null>(
-    null
-  );
+  const [parsedResponse, setParsedResponse] = useState<ParsedResponse | null>(null);
   const [activeQuestion, setActiveQuestion] = useState<number>(0);
   const [inputValue, setInputValue] = useState<string>("");
-  const [includeContentStore, setIncludeContentStore] =
-    useState<boolean>(false);
+  const [includeContentStore, setIncludeContentStore] = useState<boolean>(false);
   const [titleAnimationComplete, setTitleAnimationComplete] = useState(false);
+  const [showVisualDescriptions, setShowVisualDescriptions] = useState<boolean>(false);
+  const [showTeacherNotes, setShowTeacherNotes] = useState<boolean>(true);
 
   // Convert topics to the format expected by TopicsMisconceptionsTable
   const formatTopicsForTable = (topics: Topic[]) => {
@@ -87,47 +65,6 @@ export function MathAssistantPage() {
     return formattedTopics;
   };
 
-  // Function to queue all content for background loading
-  const queueContentForBackground = (parsedData: ParsedResponse) => {
-    // Clear any existing queue
-    renderQueue.clearQueue();
-
-    // Queue all question and solution content
-    parsedData.questions.forEach((question, index) => {
-      if (question.content) {
-        // First question gets the highest priority
-        const priority = index === 0 ? 0 : index + 1;
-
-        // Add question content to queue with priority based on index
-        renderQueue.addToQueue({
-          id: `question-${index}`,
-          tikzCode: question.content,
-          priority: priority,
-        });
-      }
-
-      // Add solution content to queue with slightly lower priority
-      if (question.solution && question.solution.content) {
-        // First solution gets high priority but slightly lower than first question
-        const priority =
-          index === 0 ? 1 : index + parsedData.questions.length + 1;
-
-        renderQueue.addToQueue({
-          id: `solution-${index}`,
-          tikzCode: question.solution.content,
-          priority: priority,
-        });
-      }
-    });
-  };
-
-  // Watch for new parsedResponse and start background loading
-  useEffect(() => {
-    if (parsedResponse) {
-      queueContentForBackground(parsedResponse);
-    }
-  }, [parsedResponse]);
-
   const handleSubmit = async (message: string) => {
     if (!message.trim()) return;
 
@@ -135,15 +72,13 @@ export function MathAssistantPage() {
     setError(null);
 
     try {
-      // Format the prompt by injecting TikZ examples and conditionally the Content Store misconceptions.
-      let formattedPrompt = GENERATE_QUESTIONS_PROMPT.replace(
-        "{{TIKZ_EXAMPLES}}",
-        TikzExamples
-      );
+      // Format the prompt by conditionally including the Content Store misconceptions
+      let formattedPrompt = GENERATE_QUESTIONS_PROMPT;
+      
       if (includeContentStore) {
         formattedPrompt = formattedPrompt.replace(
           "{{MISCONCEPTION_STORE}}",
-          CONTENT_STORE_MISCONCEPTIONS
+          `\n\nUse the following misconceptions database to inform your question generation:\n${MISCONCEPTIONS_LIST}`
         );
       } else {
         formattedPrompt = formattedPrompt.replace(
@@ -151,7 +86,8 @@ export function MathAssistantPage() {
           ""
         );
       }
-      formattedPrompt += `\n\nUser Request: ${message}`;
+      
+      formattedPrompt += `\n\nTeacher Input: "${message}"`;
 
       // Call the Gemini API
       const result = await gemini.generateContent(formattedPrompt);
@@ -161,8 +97,8 @@ export function MathAssistantPage() {
         result.candidates?.[0]?.content?.parts?.[0]?.text ||
         "No response generated";
 
-      // Parse the response
-      const parsed = parseGeminiResponse(generatedText);
+      // Parse the response and save debug file
+      const parsed = parseAIResponse(generatedText, true);
       setParsedResponse(parsed);
       setActiveQuestion(0); // Reset to first question
 
@@ -186,6 +122,31 @@ export function MathAssistantPage() {
     setIncludeContentStore(!includeContentStore);
   };
 
+  const downloadMarkdown = () => {
+    if (!parsedResponse) return;
+    
+    const blob = new Blob([parsedResponse.markdownContent], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `math_questions_${parsedResponse.timestamp}.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const getExampleIcons = () => {
+    const icons = [
+      <CalculatorIcon size={18} />,
+      <BookOpenIcon size={18} />,
+      <BrainIcon size={18} />,
+      <SparklesIcon size={18} />,
+      <CalculatorIcon size={18} />
+    ];
+    return icons;
+  };
+
   return (
     <div className="container mx-auto px-4 py-8 max-w-4xl">
       {!parsedResponse ? (
@@ -206,11 +167,10 @@ export function MathAssistantPage() {
               />
             </div>
 
-            {/* Only animate the subtitle after the title animation is complete */}
             <div className="h-12 flex items-center justify-center">
               {titleAnimationComplete && (
                 <SplitText
-                  text="Generate maths questions and identify common misconceptions for your classroom. Get started by typing a prompt below!"
+                  text="Tell me what you've taught your class, and I'll generate targeted questions to reveal misconceptions!"
                   className="text-lg text-gray-600 max-w-xl mx-auto"
                   delay={15}
                   animationFrom={{
@@ -240,14 +200,14 @@ export function MathAssistantPage() {
                     Try one of these examples:
                   </p>
                   <div className="flex flex-col gap-2">
-                    {examplePrompts.map((prompt) => (
+                    {EXAMPLE_PROMPTS.map((prompt, index) => (
                       <button
-                        key={prompt.id}
-                        onClick={() => handleExampleClick(prompt.text)}
+                        key={index}
+                        onClick={() => handleExampleClick(prompt)}
                         className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm text-gray-700 transition-colors text-left"
                       >
-                        <span className="shrink-0">{prompt.icon}</span>
-                        <span>{prompt.text}</span>
+                        <span className="shrink-0">{getExampleIcons()[index]}</span>
+                        <span>{prompt}</span>
                       </button>
                     ))}
                   </div>
@@ -260,10 +220,10 @@ export function MathAssistantPage() {
                 <div className="flex flex-col items-center justify-center">
                   <div className="w-12 h-12 border-t-4 border-b-4 border-blue-500 rounded-full animate-spin mb-4"></div>
                   <p className="text-gray-600">
-                    Generating mathematics resources...
+                    Analyzing your topic and generating targeted questions...
                   </p>
                   <p className="text-xs text-gray-500 mt-2">
-                    This may take a minute as we create high-quality content
+                    This will create 5 questions designed to reveal misconceptions
                   </p>
                 </div>
               </div>
@@ -278,34 +238,46 @@ export function MathAssistantPage() {
         </div>
       ) : (
         <div>
-          <Button
-            variant="outline"
-            className="mb-6"
-            onClick={() => setParsedResponse(null)}
-          >
-            ← Back to Prompt
-          </Button>
+          <div className="flex items-center justify-between mb-6">
+            <Button
+              variant="outline"
+              onClick={() => setParsedResponse(null)}
+            >
+              ← Generate New Questions
+            </Button>
+            
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={downloadMarkdown}
+              className="flex items-center gap-2"
+            >
+              <DownloadIcon className="w-4 h-4" />
+              Download Markdown
+            </Button>
+          </div>
 
-          {/* Tabs for Questions, Solutions, and Misconceptions */}
+          {/* Tabs for Questions and Misconceptions */}
           <Tabs defaultValue="questions" className="mb-6">
             <TabsList className="w-full border-b p-0 mb-2">
               <TabsTrigger value="questions" className="flex-1 rounded-t-lg">
-                Questions
-              </TabsTrigger>
-              <TabsTrigger value="solutions" className="flex-1 rounded-t-lg">
-                Solutions
+                Questions ({parsedResponse.questions.length})
               </TabsTrigger>
               <TabsTrigger
                 value="misconceptions"
                 className="flex-1 rounded-t-lg"
               >
-                Misconceptions
+                Misconceptions ({parsedResponse.topics.length} topics)
+              </TabsTrigger>
+              <TabsTrigger value="debug" className="flex-1 rounded-t-lg">
+                Debug
               </TabsTrigger>
             </TabsList>
 
             <TabsContent value="questions" className="mt-4">
               <div className="bg-white p-6 rounded-lg border shadow-sm">
-                <div className="flex justify-between items-center mb-4">
+                {/* Question Navigation */}
+                <div className="flex justify-between items-center mb-6">
                   <div className="flex gap-2">
                     <Button
                       variant="outline"
@@ -332,97 +304,65 @@ export function MathAssistantPage() {
                       Next
                     </Button>
                   </div>
-                  <div className="text-sm text-gray-500">
-                    Question {activeQuestion + 1} of{" "}
-                    {parsedResponse.questions.length}
+                  
+                  <div className="flex items-center gap-4">
+                    {/* View toggles */}
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant={showVisualDescriptions ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setShowVisualDescriptions(!showVisualDescriptions)}
+                        className="flex items-center gap-1"
+                      >
+                        {showVisualDescriptions ? <EyeIcon className="w-4 h-4" /> : <EyeOffIcon className="w-4 h-4" />}
+                        Visuals
+                      </Button>
+                      
+                      <Button
+                        variant={showTeacherNotes ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setShowTeacherNotes(!showTeacherNotes)}
+                        className="flex items-center gap-1"
+                      >
+                        {showTeacherNotes ? <EyeIcon className="w-4 h-4" /> : <EyeOffIcon className="w-4 h-4" />}
+                        Notes
+                      </Button>
+                    </div>
+                    
+                    <div className="text-sm text-gray-500">
+                      Question {activeQuestion + 1} of {parsedResponse.questions.length}
+                    </div>
                   </div>
                 </div>
 
-                <div className="prose max-w-none">
-                  {parsedResponse.questions[activeQuestion]?.content && (
-                    <LatexDocumentRenderer
-                      latexCode={
-                        parsedResponse.questions[activeQuestion].content
-                      }
-                      // Set priority with active question having highest priority (0)
-                      priority={activeQuestion === 0 ? 0 : activeQuestion}
-                    />
-                  )}
-                </div>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="solutions" className="mt-4">
-              <div className="bg-white p-6 rounded-lg border shadow-sm">
-                <div className="flex justify-between items-center mb-4">
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={activeQuestion === 0}
-                      onClick={() =>
-                        setActiveQuestion((q) => Math.max(0, q - 1))
-                      }
-                    >
-                      Previous
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={
-                        activeQuestion === parsedResponse.questions.length - 1
-                      }
-                      onClick={() =>
-                        setActiveQuestion((q) =>
-                          Math.min(parsedResponse.questions.length - 1, q + 1)
-                        )
-                      }
-                    >
-                      Next
-                    </Button>
-                  </div>
-                  <div className="text-sm text-gray-500">
-                    Solution {activeQuestion + 1} of{" "}
-                    {parsedResponse.questions.length}
-                  </div>
-                </div>
-
-                <div className="prose max-w-none">
-                  {parsedResponse.questions[activeQuestion]?.solution
-                    .content && (
-                    <LatexDocumentRenderer
-                      latexCode={
-                        parsedResponse.questions[activeQuestion].solution
-                          .content
-                      }
-                      // Active question's solution gets higher priority
-                      priority={
-                        activeQuestion === 0
-                          ? 1
-                          : activeQuestion + parsedResponse.questions.length
-                      }
-                    />
-                  )}
-
-                  <div className="mt-6 p-4 bg-blue-50 rounded-md">
-                    <h3 className="font-medium text-blue-800">Teacher Notes</h3>
-                    <p className="text-blue-700 whitespace-pre-line">
-                      {parsedResponse.questions[activeQuestion]?.solution
-                        .explanation || ""}
-                    </p>
-                  </div>
-                </div>
+                {/* Question Content */}
+                {parsedResponse.questions[activeQuestion] && (
+                  <MarkdownQuestionRenderer
+                    question={parsedResponse.questions[activeQuestion]}
+                    showVisualDescription={showVisualDescriptions}
+                    showTeacherNotes={showTeacherNotes}
+                  />
+                )}
               </div>
             </TabsContent>
 
             <TabsContent value="misconceptions" className="mt-4">
               <div className="bg-white p-6 rounded-lg border shadow-sm">
                 <h2 className="text-xl font-semibold mb-4">
-                  Common Misconceptions
+                  Identified Misconceptions
                 </h2>
+                <p className="text-gray-600 mb-6">
+                  These are the common misconceptions that the generated questions are designed to reveal:
+                </p>
                 <TopicsMisconceptionsTable
                   topics={formatTopicsForTable(parsedResponse.topics)}
                 />
+              </div>
+            </TabsContent>
+
+            <TabsContent value="debug" className="mt-4">
+              <div className="bg-white p-6 rounded-lg border shadow-sm">
+                <DebugInfo parsedResponse={parsedResponse} />
               </div>
             </TabsContent>
           </Tabs>
