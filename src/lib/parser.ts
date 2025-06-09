@@ -99,6 +99,13 @@ function extractLatexFromMarkdown(text: string): string | null {
 /**
  * Parse questions and their solutions
  */
+export interface Solution {
+  content: string;
+  explanation: string;
+  misconceptions?: string; // Add this new field
+}
+
+// Update the parseQuestions function around line 90-110:
 function parseQuestions(questionsSection: string): Question[] {
   const questionBlocks = extractAllContent(questionsSection, "question");
 
@@ -107,6 +114,7 @@ function parseQuestions(questionsSection: string): Question[] {
     const contentSection = extractContent(block, "content") || "";
     const solutionSection = extractContent(block, "solution") || "";
     const explanation = extractContent(block, "explanation") || "";
+    const misconceptions = extractContent(block, "misconceptions") || ""; // Add this line
 
     // Extract the LaTeX code from the markdown blocks
     const content = extractLatexFromMarkdown(contentSection) || contentSection;
@@ -119,6 +127,7 @@ function parseQuestions(questionsSection: string): Question[] {
       solution: {
         content: solutionContent,
         explanation,
+        misconceptions, // Add this field
       },
     };
   });

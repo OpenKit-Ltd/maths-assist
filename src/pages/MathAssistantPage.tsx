@@ -93,6 +93,29 @@ export function MathAssistantPage() {
     return url;
   };
 
+  // Add this helper function before the handleSubmit function:
+  const formatMisconductionsForLatex = (misconceptions: string): string => {
+    if (!misconceptions.trim())
+      return "No specific misconceptions identified for this question.";
+
+    // Convert bullet points to LaTeX itemize format
+    const lines = misconceptions.split("\n").filter((line) => line.trim());
+    const formattedLines = lines
+      .map((line) => {
+        // Remove existing bullet points and format for LaTeX
+        const cleanLine = line.replace(/^[•\-\*]\s*/, "").trim();
+        return cleanLine ? `\\item ${cleanLine}` : "";
+      })
+      .filter((line) => line);
+
+    if (formattedLines.length === 0)
+      return "No specific misconceptions identified for this question.";
+
+    return `\\begin{itemize}
+${formattedLines.join("\n")}
+\\end{itemize}`;
+  };
+
   const handleSubmit = async (message: string) => {
     if (!message.trim()) return;
 
@@ -187,8 +210,8 @@ ${q.solution.content
   .replace(/\\documentclass.*?\\begin\{document\}/s, "")
   .replace(/\\end\{document\}/g, "")}
 
-\\subsection*{Teacher Notes}
-${q.solution.explanation || ""}
+\\subsection*{Common Misconceptions}
+${formatMisconductionsForLatex(q.solution.misconceptions || "")}
 
 \\vspace{1cm}
 `
@@ -259,7 +282,7 @@ ${q.solution.explanation || ""}
             <div className="h-12 flex items-center justify-center">
               {titleAnimationComplete && (
                 <SplitText
-                  text="Generate maths questions and identify common misconceptions for your classroom. Get started by typing a prompt below!"
+                  text="Generate maths worksheets to help your students identify common misconceptions. Get started by typing a prompt below!"
                   className="text-lg text-gray-600 max-w-xl mx-auto"
                   delay={15}
                   animationFrom={{
