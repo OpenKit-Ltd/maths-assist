@@ -11,6 +11,12 @@ export interface Topic {
   misconceptions: Misconception[];
 }
 
+export interface Solution {
+  content: string;
+  explanation: string;
+  misconceptions?: string; // Add this field to handle PDF mode
+}
+
 export interface Question {
   number: number;
   topic: string;
@@ -141,40 +147,40 @@ function parseQuestionsFromMarkdown(markdownContent: string): Question[] {
 /**
  * Save response to timestamped file for debugging
  */
-function saveDebugFile(response: string, timestamp: string): void {
-  try {
-    // Create a blob with the response content
-    const blob = new Blob([response], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    
-    // Create a temporary download link
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `math_questions_${timestamp}.txt`;
-    
-    // Trigger download
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    // Clean up
-    URL.revokeObjectURL(url);
-  } catch (error) {
-    console.error('Failed to save debug file:', error);
-  }
+function parseQuestions(questionsSection: string): Question[] {
+  const questionBlocks = extractAllContent(questionsSection, "question");
+
+  return questionBlocks.map((block) => {
+    const topic = extractContent(block, "topic") || "";
+    const contentSection = extractContent(block, "content") || "";
+    const solutionSection = extractContent(block, "solution") || "";
+    const explanation = extractContent(block, "explanation") || "";
+    const misconceptions = extractContent(block, "misconceptions") || ""; // Extract misconceptions
+
+    // Extract the LaTeX code from the markdown blocks
+    const content = extractLatexFromMarkdown(contentSection) || contentSection;
+    const solutionContent =
+      extractLatexFromMarkdown(solutionSection) || solutionSection;
+
+    return {
+      topic,
+      content,
+      solution: {
+        content: solutionContent,
+        explanation,
+        misconceptions, // Include misconceptions in the solution
+      },
+    };
+  });
 }
 
 /**
  * Parse the full response from AI
  */
-export function parseAIResponse(response: string, saveDebug: boolean = true): ParsedResponse {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  
-  // Save debug file if requested
-  if (saveDebug) {
-    saveDebugFile(response, timestamp);
-  }
-  
+export function parseGeminiResponse(response: string): ParsedResponse {
+  // Format the response to handle line breaks
+  const formattedResponse = response;
+
   // Extract the main sections
   const topicsSection = extractContent(response, "topics") || "";
   const markdownSection = extractContent(response, "markdown") || "";
