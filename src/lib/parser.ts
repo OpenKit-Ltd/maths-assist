@@ -16,6 +16,7 @@ export interface Topic {
 export interface Solution {
   content: string;
   explanation: string;
+  misconceptions?: string; // Add this field to handle PDF mode
 }
 
 export interface Question {
@@ -107,6 +108,7 @@ function parseQuestions(questionsSection: string): Question[] {
     const contentSection = extractContent(block, "content") || "";
     const solutionSection = extractContent(block, "solution") || "";
     const explanation = extractContent(block, "explanation") || "";
+    const misconceptions = extractContent(block, "misconceptions") || ""; // Extract misconceptions
 
     // Extract the LaTeX code from the markdown blocks
     const content = extractLatexFromMarkdown(contentSection) || contentSection;
@@ -119,6 +121,7 @@ function parseQuestions(questionsSection: string): Question[] {
       solution: {
         content: solutionContent,
         explanation,
+        misconceptions, // Include misconceptions in the solution
       },
     };
   });
@@ -129,7 +132,6 @@ function parseQuestions(questionsSection: string): Question[] {
  */
 export function parseGeminiResponse(response: string): ParsedResponse {
   // Format the response to handle line breaks
-  //   const formattedResponse = response.replace(/\\n(?= )/g, "\n");
   const formattedResponse = response;
 
   // Extract the main sections

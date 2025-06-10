@@ -24,6 +24,8 @@ import {
   SparklesIcon,
   BrainIcon,
   CalculatorIcon,
+  FileTextIcon,
+  MonitorIcon,
 } from "lucide-react";
 
 // Initialize the API client with the API key from environment variables
@@ -53,6 +55,13 @@ const examplePrompts = [
   },
 ];
 
+interface CompileResponse {
+  error?: string;
+  details?: string;
+}
+
+type ViewMode = "pdf" | "interactive";
+
 export function MathAssistantPage() {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +73,15 @@ export function MathAssistantPage() {
   const [includeContentStore, setIncludeContentStore] =
     useState<boolean>(false);
   const [titleAnimationComplete, setTitleAnimationComplete] = useState(false);
+
+  // Mode state
+  const [viewMode, setViewMode] = useState<ViewMode>("interactive");
+
+  // PDF-specific state
+  const [showPdfViewer, setShowPdfViewer] = useState<boolean>(false);
+  const [submittedPrompt, setSubmittedPrompt] = useState<string>("");
+  const [questionsPdfUrl, setQuestionsPdfUrl] = useState<string | null>(null);
+  const [solutionsPdfUrl, setSolutionsPdfUrl] = useState<string | null>(null);
 
   // Convert topics to the format expected by TopicsMisconceptionsTable
   const formatTopicsForTable = (topics: Topic[]) => {
@@ -87,7 +105,56 @@ export function MathAssistantPage() {
     return formattedTopics;
   };
 
-  // Function to queue all content for background loading
+  // Function to compile LaTeX to PDF
+  const compileToPdf = async (latexCode: string): Promise<string> => {
+    const response = await fetch("http://localhost:5000/compile", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        tikz_code: latexCode,
+        format: "pdf", // Request PDF format
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData: CompileResponse = await response.json();
+      throw new Error(errorData.details || "Failed to compile LaTeX code");
+    }
+
+    // Get the PDF blob
+    const pdfBlob: Blob = await response.blob();
+
+    // Create a URL for the PDF blob
+    const url: string = URL.createObjectURL(pdfBlob);
+    return url;
+  };
+
+  // Helper function to format misconceptions for LaTeX
+  const formatMisconductionsForLatex = (misconceptions: string): string => {
+    if (!misconceptions?.trim())
+      return "No specific misconceptions identified for this question.";
+
+    // Convert bullet points to LaTeX itemize format
+    const lines = misconceptions.split("\n").filter((line) => line.trim());
+    const formattedLines = lines
+      .map((line) => {
+        // Remove existing bullet points and format for LaTeX
+        const cleanLine = line.replace(/^[•\-\*]\s*/, "").trim();
+        return cleanLine ? `\\item ${cleanLine}` : "";
+      })
+      .filter((line) => line);
+
+    if (formattedLines.length === 0)
+      return "No specific misconceptions identified for this question.";
+
+    return `\\begin{itemize}
+${formattedLines.join("\n")}
+\\end{itemize}`;
+  };
+
+  // Function to queue all content for background loading (interactive mode)
   const queueContentForBackground = (parsedData: ParsedResponse) => {
     // Clear any existing queue
     renderQueue.clearQueue();
@@ -121,18 +188,20 @@ export function MathAssistantPage() {
     });
   };
 
-  // Watch for new parsedResponse and start background loading
+  // Watch for new parsedResponse and start background loading (interactive mode)
   useEffect(() => {
-    if (parsedResponse) {
+    if (parsedResponse && viewMode === "interactive") {
       queueContentForBackground(parsedResponse);
     }
-  }, [parsedResponse]);
+  }, [parsedResponse, viewMode]);
 
   const handleSubmit = async (message: string) => {
     if (!message.trim()) return;
 
     setLoading(true);
     setError(null);
+    setSubmittedPrompt(message);
+    setShowPdfViewer(false);
 
     try {
       // Format the prompt by injecting TikZ examples and conditionally the Content Store misconceptions.
@@ -166,7 +235,87 @@ export function MathAssistantPage() {
       setParsedResponse(parsed);
       setActiveQuestion(0); // Reset to first question
 
-      console.log("Parsed response:", parsed);
+      if (parsed.questions.length === 0) {
+        throw new Error("No questions were generated");
+      }
+
+      // If in PDF mode, generate PDFs
+      if (viewMode === "pdf") {
+        // Combine all questions into one LaTeX document
+        const questionsLatex = `\\documentclass{article}
+\\pagestyle{empty}
+\\usepackage{geometry}
+\\geometry{margin=1cm}
+\\usepackage{tikz}
+\\usepackage{amsmath}
+\\usepackage{amssymb}
+\\usetikzlibrary{quotes,angles,calc}
+
+\\begin{document}
+
+\\title{Question Worksheet}
+\\maketitle
+
+${parsed.questions
+  .map(
+    (q, index) => `
+\\section*{Question ${index + 1}}
+${q.content
+  .replace(/\\documentclass.*?\\begin\{document\}/s, "")
+  .replace(/\\end\{document\}/g, "")}
+
+\\vspace{1cm}
+`
+  )
+  .join("")}
+
+\\end{document}`;
+
+        // Combine all solutions into one LaTeX document
+        const solutionsLatex = `\\documentclass{article}
+\\pagestyle{empty}
+\\usepackage{geometry}
+\\geometry{margin=1cm}
+\\usepackage{tikz}
+\\usepackage{amsmath}
+\\usepackage{amssymb}
+\\usetikzlibrary{quotes,angles,calc}
+
+\\begin{document}
+
+\\title{Solution Worksheet}
+\\maketitle
+
+${parsed.questions
+  .map(
+    (q, index) => `
+\\section*{Question ${index + 1} - Solution}
+${q.solution.content
+  .replace(/\\documentclass.*?\\begin\{document\}/s, "")
+  .replace(/\\end\{document\}/g, "")}
+
+\\subsection*{Common Misconceptions}
+${formatMisconductionsForLatex(q.solution.misconceptions || "")}
+
+\\vspace{1cm}
+`
+  )
+  .join("")}
+
+\\end{document}`;
+
+        // Compile both documents to PDF
+        const [questionsUrl, solutionsUrl] = await Promise.all([
+          compileToPdf(questionsLatex),
+          compileToPdf(solutionsLatex),
+        ]);
+
+        setQuestionsPdfUrl(questionsUrl);
+        setSolutionsPdfUrl(solutionsUrl);
+        setShowPdfViewer(true);
+      }
+
+      console.log("Generated content successfully");
     } catch (err) {
       if (err instanceof Error) {
         setError(`Error: ${err.message}`);
@@ -186,97 +335,127 @@ export function MathAssistantPage() {
     setIncludeContentStore(!includeContentStore);
   };
 
-  return (
-    <div className="container mx-auto px-4 py-8 max-w-4xl">
-      {!parsedResponse ? (
-        <div className="flex flex-col items-center">
-          <div className="mb-12 text-center">
-            <div className="flex flex-col items-center mb-2">
-              <SplitText
-                text="MathsAssist AI"
-                className="text-4xl font-bold text-gray-800"
-                delay={25}
-                animationFrom={{
-                  opacity: 0,
-                  transform: "translate3d(0,30px,0)",
-                }}
-                onLetterAnimationComplete={() =>
-                  setTitleAnimationComplete(true)
-                }
-              />
-            </div>
+  const handleBackToPrompt = () => {
+    setShowPdfViewer(false);
+    setParsedResponse(null);
+    setSubmittedPrompt("");
+    setQuestionsPdfUrl(null);
+    setSolutionsPdfUrl(null);
+    setError(null);
+  };
 
-            {/* Only animate the subtitle after the title animation is complete */}
-            <div className="h-12 flex items-center justify-center">
-              {titleAnimationComplete && (
-                <SplitText
-                  text="Generate maths questions and identify common misconceptions for your classroom. Get started by typing a prompt below!"
-                  className="text-lg text-gray-600 max-w-xl mx-auto"
-                  delay={15}
-                  animationFrom={{
-                    opacity: 0,
-                    transform: "translate3d(0,20px,0)",
-                  }}
-                />
-              )}
-            </div>
+  // Render based on mode and state
+  const renderContent = () => {
+    if (viewMode === "pdf" && showPdfViewer && parsedResponse) {
+      return (
+        <div>
+          <Button
+            variant="outline"
+            className="mb-6"
+            onClick={handleBackToPrompt}
+          >
+            ← Back to Prompt
+          </Button>
+
+          {/* Display the submitted prompt */}
+          <div className="mb-6 p-4 bg-gray-50 rounded-lg border">
+            <h3 className="font-medium text-gray-800 mb-2">Your Request:</h3>
+            <p className="text-gray-600">{submittedPrompt}</p>
           </div>
 
-          <div className="w-full max-w-2xl">
-            {!loading && (
-              <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-8">
-                <ChatInput
-                  onSend={handleSubmit}
-                  value={inputValue}
-                  onChange={setInputValue}
-                  showMisconceptionsToggle={true}
-                  includeMisconceptions={includeContentStore}
-                  onMisconceptionsToggle={toggleMisconceptions}
-                  className="mb-6"
-                />
+          {/* PDF Viewer with Tabs */}
+          <Tabs defaultValue="questions" className="mb-6">
+            <TabsList className="w-full border-b p-0 mb-2">
+              <TabsTrigger value="questions" className="flex-1 rounded-t-lg">
+                Question Worksheet
+              </TabsTrigger>
+              <TabsTrigger value="solutions" className="flex-1 rounded-t-lg">
+                Solution Worksheet
+              </TabsTrigger>
+            </TabsList>
 
-                <div className="border-t pt-4">
-                  <p className="text-sm text-gray-600 mb-3">
-                    Try one of these examples:
-                  </p>
-                  <div className="flex flex-col gap-2">
-                    {examplePrompts.map((prompt) => (
-                      <button
-                        key={prompt.id}
-                        onClick={() => handleExampleClick(prompt.text)}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm text-gray-700 transition-colors text-left"
-                      >
-                        <span className="shrink-0">{prompt.icon}</span>
-                        <span>{prompt.text}</span>
-                      </button>
-                    ))}
+            <TabsContent value="questions" className="mt-4">
+              <div className="bg-white p-6 rounded-lg border shadow-sm min-h-[600px]">
+                <h2 className="text-xl font-semibold mb-4">
+                  Question Worksheet PDF
+                </h2>
+                {questionsPdfUrl ? (
+                  <iframe
+                    src={questionsPdfUrl}
+                    className="w-full h-[600px] border rounded"
+                    title="Question Worksheet PDF"
+                  />
+                ) : (
+                  <div className="flex items-center justify-center h-96 bg-gray-100 rounded-lg">
+                    <div className="text-center">
+                      <div className="text-gray-500 mb-2">
+                        <svg
+                          className="w-16 h-16 mx-auto mb-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                          />
+                        </svg>
+                      </div>
+                      <p className="text-gray-600">
+                        Loading question worksheet...
+                      </p>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
-            )}
+            </TabsContent>
 
-            {loading && (
-              <div className="text-center p-6 bg-white rounded-lg border shadow-sm">
-                <div className="flex flex-col items-center justify-center">
-                  <div className="w-12 h-12 border-t-4 border-b-4 border-blue-500 rounded-full animate-spin mb-4"></div>
-                  <p className="text-gray-600">
-                    Generating mathematics resources...
-                  </p>
-                  <p className="text-xs text-gray-500 mt-2">
-                    This may take a minute as we create high-quality content
-                  </p>
-                </div>
+            <TabsContent value="solutions" className="mt-4">
+              <div className="bg-white p-6 rounded-lg border shadow-sm min-h-[600px]">
+                <h2 className="text-xl font-semibold mb-4">
+                  Solution Worksheet PDF
+                </h2>
+                {solutionsPdfUrl ? (
+                  <iframe
+                    src={solutionsPdfUrl}
+                    className="w-full h-[600px] border rounded"
+                    title="Solution Worksheet PDF"
+                  />
+                ) : (
+                  <div className="flex items-center justify-center h-96 bg-gray-100 rounded-lg">
+                    <div className="text-center">
+                      <div className="text-gray-500 mb-2">
+                        <svg
+                          className="w-16 h-16 mx-auto mb-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                          />
+                        </svg>
+                      </div>
+                      <p className="text-gray-600">
+                        Loading solution worksheet...
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-
-            {error && (
-              <div className="bg-red-50 text-red-600 p-4 rounded-md border border-red-200">
-                {error}
-              </div>
-            )}
-          </div>
+            </TabsContent>
+          </Tabs>
         </div>
-      ) : (
+      );
+    }
+
+    if (viewMode === "interactive" && parsedResponse) {
+      return (
         <div>
           <Button
             variant="outline"
@@ -344,7 +523,6 @@ export function MathAssistantPage() {
                       latexCode={
                         parsedResponse.questions[activeQuestion].content
                       }
-                      // Set priority with active question having highest priority (0)
                       priority={activeQuestion === 0 ? 0 : activeQuestion}
                     />
                   )}
@@ -395,7 +573,6 @@ export function MathAssistantPage() {
                         parsedResponse.questions[activeQuestion].solution
                           .content
                       }
-                      // Active question's solution gets higher priority
                       priority={
                         activeQuestion === 0
                           ? 1
@@ -427,7 +604,139 @@ export function MathAssistantPage() {
             </TabsContent>
           </Tabs>
         </div>
-      )}
+      );
+    }
+
+    // Default view - prompt input
+    return (
+      <div className="flex flex-col items-center">
+        <div className="mb-12 text-center">
+          <div className="flex flex-col items-center mb-2">
+            <SplitText
+              text="MathsAssist AI"
+              className="text-4xl font-bold text-gray-800"
+              delay={25}
+              animationFrom={{
+                opacity: 0,
+                transform: "translate3d(0,30px,0)",
+              }}
+              onLetterAnimationComplete={() => setTitleAnimationComplete(true)}
+            />
+          </div>
+
+          {/* Only animate the subtitle after the title animation is complete */}
+          <div className="h-12 flex items-center justify-center">
+            {titleAnimationComplete && (
+              <SplitText
+                text={
+                  viewMode === "pdf"
+                    ? "Generate maths worksheets to help your students identify common misconceptions. Get started by typing a prompt below!"
+                    : "Generate maths questions and identify common misconceptions for your classroom. Get started by typing a prompt below!"
+                }
+                className="text-lg text-gray-600 max-w-xl mx-auto"
+                delay={15}
+                animationFrom={{
+                  opacity: 0,
+                  transform: "translate3d(0,20px,0)",
+                }}
+              />
+            )}
+          </div>
+        </div>
+
+        <div className="w-full max-w-2xl">
+          {!loading && (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-8">
+              {/* Mode Toggle */}
+              <div className="flex justify-center mb-6">
+                <div
+                  className="inline-flex rounded-lg bg-gray-100 p-1"
+                  role="group"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("interactive")}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                      viewMode === "interactive"
+                        ? "bg-white text-blue-600 shadow-sm"
+                        : "text-gray-600 hover:text-gray-800"
+                    }`}
+                  >
+                    <MonitorIcon size={16} />
+                    Interactive View
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("pdf")}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                      viewMode === "pdf"
+                        ? "bg-white text-blue-600 shadow-sm"
+                        : "text-gray-600 hover:text-gray-800"
+                    }`}
+                  >
+                    <FileTextIcon size={16} />
+                    PDF Worksheets
+                  </button>
+                </div>
+              </div>
+
+              <ChatInput
+                onSend={handleSubmit}
+                value={inputValue}
+                onChange={setInputValue}
+                showMisconceptionsToggle={true}
+                includeMisconceptions={includeContentStore}
+                onMisconceptionsToggle={toggleMisconceptions}
+                className="mb-6"
+              />
+
+              <div className="border-t pt-4">
+                <p className="text-sm text-gray-600 mb-3">
+                  Try one of these examples:
+                </p>
+                <div className="flex flex-col gap-2">
+                  {examplePrompts.map((prompt) => (
+                    <button
+                      key={prompt.id}
+                      onClick={() => handleExampleClick(prompt.text)}
+                      className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm text-gray-700 transition-colors text-left"
+                    >
+                      <span className="shrink-0">{prompt.icon}</span>
+                      <span>{prompt.text}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {loading && (
+            <div className="text-center p-6 bg-white rounded-lg border shadow-sm">
+              <div className="flex flex-col items-center justify-center">
+                <div className="w-12 h-12 border-t-4 border-b-4 border-blue-500 rounded-full animate-spin mb-4"></div>
+                <p className="text-gray-600">
+                  Generating mathematics resources...
+                </p>
+                <p className="text-xs text-gray-500 mt-2">
+                  This may take a minute as we create high-quality content
+                </p>
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div className="bg-red-50 text-red-600 p-4 rounded-md border border-red-200">
+              {error}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="container mx-auto px-4 py-8 max-w-4xl">
+      {renderContent()}
     </div>
   );
 }
