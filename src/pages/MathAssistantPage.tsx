@@ -1,24 +1,24 @@
-// Updated MathAssistantPage.tsx
-import { useState } from "react";
+// src/pages/MathAssistantPage.tsx
+import { useState, useRef, useEffect } from "react";
 import { GeminiAPI } from "../api/geminiAPI";
 import { ChatInput } from "../components/ChatInput";
-import { MarkdownQuestionRenderer } from "../components/MarkdownQuestionRenderer";
+import { LatexDocumentRenderer } from "../components/LatexDocumentRenderer";
 import { TopicsMisconceptionsTable } from "../components/TopicsMisconceptionsTable";
-import { DebugInfo } from "../components/DebugInfo";
 import { Button } from "../components/ui/button";
 import SplitText from "../components/SplitText";
+import { renderQueue } from "../lib/renderQueue";
 import {
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
 } from "../components/ui/tabs";
-import { parseAIResponse, ParsedResponse, Topic } from "../lib/parser";
+import { parseGeminiResponse, ParsedResponse, Topic } from "../lib/parser";
 import {
   GENERATE_QUESTIONS_PROMPT,
-  EXAMPLE_PROMPTS,
+  CONTENT_STORE_MISCONCEPTIONS,
 } from "../lib/prompts";
-import { MISCONCEPTIONS_LIST } from "../lib/misconceptions";
+import { TikzExamples } from "@/lib/tikz";
 import {
   BookOpenIcon,
   SparklesIcon,
@@ -65,13 +65,14 @@ type ViewMode = "pdf" | "interactive";
 export function MathAssistantPage() {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [parsedResponse, setParsedResponse] = useState<ParsedResponse | null>(null);
+  const [parsedResponse, setParsedResponse] = useState<ParsedResponse | null>(
+    null
+  );
   const [activeQuestion, setActiveQuestion] = useState<number>(0);
   const [inputValue, setInputValue] = useState<string>("");
-  const [includeContentStore, setIncludeContentStore] = useState<boolean>(false);
+  const [includeContentStore, setIncludeContentStore] =
+    useState<boolean>(false);
   const [titleAnimationComplete, setTitleAnimationComplete] = useState(false);
-  const [showVisualDescriptions, setShowVisualDescriptions] = useState<boolean>(false);
-  const [showTeacherNotes, setShowTeacherNotes] = useState<boolean>(true);
 
   // Mode state
   const [viewMode, setViewMode] = useState<ViewMode>("interactive");
@@ -203,13 +204,15 @@ ${formattedLines.join("\n")}
     setShowPdfViewer(false);
 
     try {
-      // Format the prompt by conditionally including the Content Store misconceptions
-      let formattedPrompt = GENERATE_QUESTIONS_PROMPT;
-      
+      // Format the prompt by injecting TikZ examples and conditionally the Content Store misconceptions.
+      let formattedPrompt = GENERATE_QUESTIONS_PROMPT.replace(
+        "{{TIKZ_EXAMPLES}}",
+        TikzExamples
+      );
       if (includeContentStore) {
         formattedPrompt = formattedPrompt.replace(
           "{{MISCONCEPTION_STORE}}",
-          `\n\nUse the following misconceptions database to inform your question generation:\n${MISCONCEPTIONS_LIST}`
+          CONTENT_STORE_MISCONCEPTIONS
         );
       } else {
         formattedPrompt = formattedPrompt.replace(
@@ -217,8 +220,7 @@ ${formattedLines.join("\n")}
           ""
         );
       }
-      
-      formattedPrompt += `\n\nTeacher Input: "${message}"`;
+      formattedPrompt += `\n\nUser Request: ${message}`;
 
       // Call the Gemini API
       const result = await gemini.generateContent(formattedPrompt);
@@ -228,8 +230,8 @@ ${formattedLines.join("\n")}
         result.candidates?.[0]?.content?.parts?.[0]?.text ||
         "No response generated";
 
-      // Parse the response and save debug file
-      const parsed = parseAIResponse(generatedText, true);
+      // Parse the response
+      const parsed = parseGeminiResponse(generatedText);
       setParsedResponse(parsed);
       setActiveQuestion(0); // Reset to first question
 
@@ -455,46 +457,34 @@ ${formatMisconductionsForLatex(q.solution.misconceptions || "")}
     if (viewMode === "interactive" && parsedResponse) {
       return (
         <div>
-          <div className="flex items-center justify-between mb-6">
-            <Button
-              variant="outline"
-              onClick={() => setParsedResponse(null)}
-            >
-              ← Generate New Questions
-            </Button>
-            
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={downloadMarkdown}
-              className="flex items-center gap-2"
-            >
-              <DownloadIcon className="w-4 h-4" />
-              Download Markdown
-            </Button>
-          </div>
+          <Button
+            variant="outline"
+            className="mb-6"
+            onClick={() => setParsedResponse(null)}
+          >
+            ← Back to Prompt
+          </Button>
 
-          {/* Tabs for Questions and Misconceptions */}
+          {/* Tabs for Questions, Solutions, and Misconceptions */}
           <Tabs defaultValue="questions" className="mb-6">
             <TabsList className="w-full border-b p-0 mb-2">
               <TabsTrigger value="questions" className="flex-1 rounded-t-lg">
-                Questions ({parsedResponse.questions.length})
+                Questions
+              </TabsTrigger>
+              <TabsTrigger value="solutions" className="flex-1 rounded-t-lg">
+                Solutions
               </TabsTrigger>
               <TabsTrigger
                 value="misconceptions"
                 className="flex-1 rounded-t-lg"
               >
-                Misconceptions ({parsedResponse.topics.length} topics)
-              </TabsTrigger>
-              <TabsTrigger value="debug" className="flex-1 rounded-t-lg">
-                Debug
+                Misconceptions
               </TabsTrigger>
             </TabsList>
 
             <TabsContent value="questions" className="mt-4">
               <div className="bg-white p-6 rounded-lg border shadow-sm">
-                {/* Question Navigation */}
-                <div className="flex justify-between items-center mb-6">
+                <div className="flex justify-between items-center mb-4">
                   <div className="flex gap-2">
                     <Button
                       variant="outline"
@@ -521,34 +511,9 @@ ${formatMisconductionsForLatex(q.solution.misconceptions || "")}
                       Next
                     </Button>
                   </div>
-                  
-                  <div className="flex items-center gap-4">
-                    {/* View toggles */}
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant={showVisualDescriptions ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setShowVisualDescriptions(!showVisualDescriptions)}
-                        className="flex items-center gap-1"
-                      >
-                        {showVisualDescriptions ? <EyeIcon className="w-4 h-4" /> : <EyeOffIcon className="w-4 h-4" />}
-                        Visuals
-                      </Button>
-                      
-                      <Button
-                        variant={showTeacherNotes ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setShowTeacherNotes(!showTeacherNotes)}
-                        className="flex items-center gap-1"
-                      >
-                        {showTeacherNotes ? <EyeIcon className="w-4 h-4" /> : <EyeOffIcon className="w-4 h-4" />}
-                        Notes
-                      </Button>
-                    </div>
-                    
-                    <div className="text-sm text-gray-500">
-                      Question {activeQuestion + 1} of {parsedResponse.questions.length}
-                    </div>
+                  <div className="text-sm text-gray-500">
+                    Question {activeQuestion + 1} of{" "}
+                    {parsedResponse.questions.length}
                   </div>
                 </div>
 
@@ -630,20 +595,11 @@ ${formatMisconductionsForLatex(q.solution.misconceptions || "")}
             <TabsContent value="misconceptions" className="mt-4">
               <div className="bg-white p-6 rounded-lg border shadow-sm">
                 <h2 className="text-xl font-semibold mb-4">
-                  Identified Misconceptions
+                  Common Misconceptions
                 </h2>
-                <p className="text-gray-600 mb-6">
-                  These are the common misconceptions that the generated questions are designed to reveal:
-                </p>
                 <TopicsMisconceptionsTable
                   topics={formatTopicsForTable(parsedResponse.topics)}
                 />
-              </div>
-            </TabsContent>
-
-            <TabsContent value="debug" className="mt-4">
-              <div className="bg-white p-6 rounded-lg border shadow-sm">
-                <DebugInfo parsedResponse={parsedResponse} />
               </div>
             </TabsContent>
           </Tabs>
